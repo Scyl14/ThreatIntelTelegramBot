@@ -79,10 +79,14 @@ def rss_feed (source):
         except Exception as e:
             logging.warning('[!] Unable to parse Url: ' + url)
         for entry in rss_feed.entries:
-            parsed_date = parser.parse(entry.updated)
+            try:
+                parsed_date = parser.parse(entry.published)
+            except:
+                parsed_date = parser.parse(entry.updated)
             parsed_date = (parsed_date - timedelta(hours=8)).replace(tzinfo=None) 
-            now_date = datetime.now()
+            now_date = datetime.utcnow()               
             published_20_minutes_ago = now_date - parsed_date < timedelta(minutes=20)
+            logging.debug(f"[+] Checking if published 20' ago: {now_date - parsed_date} | {published_20_minutes_ago}")
             if published_20_minutes_ago:
                 send_message(entry.links[0].href)
 
