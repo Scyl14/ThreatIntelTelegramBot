@@ -2,9 +2,10 @@
 import feedparser
 import time
 from datetime import datetime , timedelta
-from dateutil import parser
-from telegram.ext import Updater, CommandHandler
+from dateutil.parser import parser , parse
+from telegram.ext import Updater 
 import logging
+import telegram
 import requests
 import pytz
 
@@ -12,6 +13,7 @@ logging.basicConfig(level=logging.ERROR)
 
 BOT_TOKEN = ''
 CHANNEL_ID = '' 
+bot = telegram.Bot(BOT_TOKEN)
 FEED_URL = ['https://grahamcluley.com/feed/', 
             'https://threatpost.com/feed/',
             'https://krebsonsecurity.com/feed/', 
@@ -61,7 +63,7 @@ def rans_feed (source):
         logging.error('[!] Unable to reach Ransomwatch: ' + source)
     
     for post in posts:
-        if datetime.utcnow() - parser.parse(post['discovered']) < timedelta(minutes=20):
+        if datetime.utcnow() - parser().parse(post['discovered']) < timedelta(minutes=20):
             feed_title = 'Title: ' + post['post_title']
             feed_group_name = 'Group Name: ' + post['group_name']
             feed_discovered = 'Discovered: ' + post['discovered']
@@ -69,40 +71,46 @@ def rans_feed (source):
             updater.bot.send_message(chat_id=CHANNEL_ID, text=message)
 
 
-def get_latest_article(feed):
-    feed['entries'].sort(key=lambda entry: entry.published_parsed or entry.updated_parsed, reverse=True)
+def send_message(title, link):
+    try:
+        bot.send_message(chat_id=CHANNEL_ID, text=title + ": " + link)
+    except Exception as e:
+        print(f"An error occurred while sending message: {e}")
 
-    if not feed['entries']:  
-        return None  
+def check_and_send(url):
+    try:
+        feed = feedparser.parse(url)
+        # Get the time of the most recent article in the feed
+        latest_time = feed['entries'][0]['published']
+        # Parse the time into a datetime object
+        latest_datetime = parse(latest_time)
+        # Convert the datetime object to a timestamp
+        latest_timestamp = time.mktime(latest_datetime.timetuple())
+        # Get the current time
+        current_timestamp = time.time()
 
-    for entry in feed['entries']:
-        date = entry.published_parsed or entry.updated_parsed
-        if not hasattr(date, 'tzinfo'):  
-            tz = pytz.timezone(feed.feed.get('tzinfo', 'UTC'))  
-            date = tz.localize(datetime.datetime.fromtimestamp(time.mktime(date)))
-        date = date.astimezone(pytz.utc)  
-        entry.published_parsed = entry.updated_parsed = date
+        # If the article was published in the last 20 minutes, send it to the Telegram chat
+        if current_timestamp - latest_timestamp < 60 * 20:
+            latest_title = feed['entries'][0]['title']
+            latest_link = feed['entries'][0]['link']
+            send_message(latest_title, latest_link)
+    except Exception as e:
+        print(f"An error occurred while checking feed {url}: {e}")
 
-    return feed['entries'][0]  
+def main():
+    first_iter = True
+    while True:
+        if first_iter:
+            message= 'starting bot ...'
+            bot.send_message(chat_id=CHANNEL_ID , text=message)
+            first_iter = False
+        rans_feed(RANSOMWATCH)
+        # Check each feed every 20 minutes
+        for url in FEED_URL:
+            check_and_send(url)
+        time.sleep(60 * 20)
+        
+if __name__ == "__main__":
+    main()
 
-def send_article(article, updater, sent_articles):
-    if article.title not in sent_articles:
-        message = f"{article.title}\n{article.link}"
-        updater.bot.send_message(chat_id=CHANNEL_ID, text=message)
-        sent_articles.add(article.title)
-        time.sleep(5)  
 
-def check_feeds(feed_urls, updater):
-    sent_articles = set()
-    for url in feed_urls:
-        try:
-            feed = feedparser.parse(url)
-            article = get_latest_article(feed)
-            if article is not None:
-                send_article(article, updater, sent_articles)
-        except Exception as e:
-            logging.error(f"Error parsing feed {url}: {e}")
-while True:
-    check_feeds(FEED_URL, updater)
-    rans_feed(RANSOMWATCH)
-    time.sleep(60 * 20)  #
