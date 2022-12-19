@@ -1,19 +1,19 @@
 
-import feedparser
-import time
-from datetime import datetime , timedelta
-from dateutil.parser import parser , parse
-from telegram.ext import Updater 
+from datetime import timedelta, datetime
+from dateutil import parser
+from pprint import pprint
+from time import sleep , gmtime
+import urllib
+import json
 import logging
-import telegram
 import requests
-import pytz
+import feedparser
 
-logging.basicConfig(level=logging.ERROR)
+logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 BOT_TOKEN = ''
 CHANNEL_ID = '' 
-bot = telegram.Bot(BOT_TOKEN)
 FEED_URL = ['https://grahamcluley.com/feed/', 
             'https://threatpost.com/feed/',
             'https://krebsonsecurity.com/feed/', 
@@ -53,64 +53,59 @@ FEED_URL = ['https://grahamcluley.com/feed/',
  
 RANSOMWATCH = "https://raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json"
 
-updater = Updater(token=BOT_TOKEN, use_context=True)
+def send_message(message):
+    requests.get(f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?chat_id={CHANNEL_ID}&text={message}')
 
 def rans_feed (source):
     try:
         posts = requests.get(source).json()
         logging.debug('[+] Querying Ransomwatch\n')
     except Exception as e:
-        logging.error('[!] Unable to reach Ransomwatch: ' + source)
-    
+        logging.warning('[!] Unable to reach Ransomwatch: ' + source)
+
     for post in posts:
-        if datetime.utcnow() - parser().parse(post['discovered']) < timedelta(minutes=20):
-            feed_title = 'Title: ' + post['post_title']
-            feed_group_name = 'Group Name: ' + post['group_name']
-            feed_discovered = 'Discovered: ' + post['discovered']
-            message = feed_title + '\n' + feed_group_name + '\n' + feed_discovered
-            updater.bot.send_message(chat_id=CHANNEL_ID, text=message)
+        if datetime.utcnow() - parser.parse(post['discovered']) < timedelta(minutes=20):
+            feed_title = 'Title: '+ post['post_title']
+            feed_group_name = 'Group Name: '+ post['group_name']
+            feed_discovered = 'Discovered: '+ post['discovered']
+            send_message(feed_title+'\n'+feed_group_name+'\n'+feed_discovered)
+        else:
+            pass
+    return 
 
-
-def send_message(title, link):
-    try:
-        bot.send_message(chat_id=CHANNEL_ID, text=title + ": " + link)
-    except Exception as e:
-        print(f"An error occurred while sending message: {e}")
-
-def check_and_send(url):
-    try:
-        feed = feedparser.parse(url)
-        # Get the time of the most recent article in the feed
-        latest_time = feed['entries'][0]['published']
-        # Parse the time into a datetime object
-        latest_datetime = parse(latest_time)
-        # Convert the datetime object to a timestamp
-        latest_timestamp = time.mktime(latest_datetime.timetuple())
-        # Get the current time
-        current_timestamp = time.time()
-
-        # If the article was published in the last 20 minutes, send it to the Telegram chat
-        if current_timestamp - latest_timestamp < 60 * 20:
-            latest_title = feed['entries'][0]['title']
-            latest_link = feed['entries'][0]['link']
-            send_message(latest_title, latest_link)
-    except Exception as e:
-        print(f"An error occurred while checking feed {url}: {e}")
+def rss_feed (source):
+    logging.debug('[+] Querying Urls: \n')
+    for url in source:
+        try:
+            rss_feed = feedparser.parse(url)
+        except Exception as e:
+            logging.warning('[!] Unable to parse Url: ' + url)
+        for entry in rss_feed.entries:
+            try:
+                parsed_date = parser.parse(entry.published)
+            except:
+                parsed_date = parser.parse(entry.updated)         
+            parsed_date = parsed_date.replace(tzinfo=None) 
+            now_date = datetime.utcnow()               
+            published_20_minutes_ago = now_date - parsed_date < timedelta(minutes=20)
+            published_today = now_date - parsed_date < timedelta(days=1)
+            if published_today:
+                logging.debug(f"[+] Checking if published 20' ago: {now_date - parsed_date} | {published_20_minutes_ago}")
+                if published_20_minutes_ago:
+                    send_message(entry.links[0].href)
+                    
 
 def main():
-    first_iter = True
-    while True:
-        if first_iter:
-            message= 'starting bot ...'
-            bot.send_message(chat_id=CHANNEL_ID , text=message)
-            first_iter = False
-        rans_feed(RANSOMWATCH)
-        # Check each feed every 20 minutes
-        for url in FEED_URL:
-            check_and_send(url)
-        time.sleep(60 * 20)
-        
+    rans_feed(RANSOMWATCH)
+    rss_feed(FEED_URL)
+ 
+
 if __name__ == "__main__":
-    main()
-
-
+    first_iter=True
+    while(True):
+        if first_iter == True:
+            send_message('\U0001F916 Starting BOT')
+            first_iter = False
+        logging.debug("[+] Starting Iteration\n")
+        main()
+        sleep(20 * 60)
